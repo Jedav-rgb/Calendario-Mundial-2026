@@ -509,10 +509,19 @@ const NAME_MAP={
   'England':'Inglaterra','Croatia':'Croacia','Ghana':'Ghana',
   'Panama':'Panamá','Uzbekistan':'Uzbekistán','Colombia':'Colombia',
   'Curaçao':'Curaçao','Curacao':'Curaçao',
-  // Short names the API might return
-  'México':'México','Sudáfrica':'Sudáfrica','Brasil':'Brasil',
-  'Alemania':'Alemania','España':'España','Francia':'Francia',
-  'Japón':'Japón','Países Bajos':'Países Bajos',
+  // wc2026api.com uses English names
+  'Mexico':'México','South Africa':'Sudáfrica','South Korea':'Corea del Sur',
+  'Bosnia-Herzegovina':'Bosnia & Herzegovina','Bosnia and Herzegovina':'Bosnia & Herzegovina',
+  'United States':'USA','Switzerland':'Suiza','Brazil':'Brasil',
+  'Morocco':'Marruecos','Haiti':'Haití','Scotland':'Escocia',
+  'Turkey':'Turquía','Germany':'Alemania','Netherlands':'Países Bajos',
+  'Japan':'Japón','Sweden':'Suecia','Tunisia':'Túnez',
+  'Ivory Coast':'Costa de Marfil','Spain':'España','Cape Verde':'Cabo Verde',
+  'Belgium':'Bélgica','Egypt':'Egipto','New Zealand':'Nueva Zelanda',
+  'Saudi Arabia':'Arabia Saudita','France':'Francia','Norway':'Noruega',
+  'Iraq':'Irak','Algeria':'Argelia','Jordan':'Jordania',
+  'DR Congo':'Congo RD','Congo DR':'Congo RD','England':'Inglaterra',
+  'Croatia':'Croacia','Panama':'Panamá','Uzbekistan':'Uzbekistán',
 };
 const norm=n=>NAME_MAP[n]||n;
 function makeKey(t1,t2){return`${t1}||${t2}`;}
@@ -528,7 +537,7 @@ async function tryFetchAPI(force=false){
     if(Date.now()-ts<TTL){
       try{
         const c=localStorage.getItem(CACHE_KEY);
-        if(c){apiScores=JSON.parse(c);setS('ok','Datos en caché · worldcup26.ir');updateTS(ts);renderAll();renderStandings();return;}
+        if(c){apiScores=JSON.parse(c);setS('ok','Datos en caché · wc2026api.com');updateTS(ts);renderAll();renderStandings();return;}
       }catch(e){}
     }
   }
@@ -537,15 +546,14 @@ async function tryFetchAPI(force=false){
   function processMatches(games){
     apiScores={};
     games.forEach(m=>{
-      // worldcup26.ir format: home_team, away_team, home_score, away_score, status
-      const t1=norm(m.home_team||m.homeTeam?.name||'');
-      const t2=norm(m.away_team||m.awayTeam?.name||'');
-      const g1=m.home_score!=null?m.home_score:(m.score?.fullTime?.home??null);
-      const g2=m.away_score!=null?m.away_score:(m.score?.fullTime?.away??null);
-      // Normalize status
-      let st=m.status||'SCHEDULED';
-      if(st==='completed'||st==='finished') st='FINISHED';
-      if(st==='in_progress'||st==='live') st='IN_PLAY';
+      const t1=norm(m.home_team||'');
+      const t2=norm(m.away_team||'');
+      const g1=m.home_score!=null?parseInt(m.home_score):null;
+      const g2=m.away_score!=null?parseInt(m.away_score):null;
+      let st=m.status||'scheduled';
+      if(st==='completed'||st==='finished'||st==='FINISHED') st='FINISHED';
+      else if(st==='in_progress'||st==='live'||st==='IN_PLAY') st='IN_PLAY';
+      else st='SCHEDULED';
       if(t1&&t2) apiScores[makeKey(t1,t2)]={g1,g2,status:st};
     });
     localStorage.setItem(CACHE_KEY,JSON.stringify(apiScores));
@@ -557,32 +565,15 @@ async function tryFetchAPI(force=false){
     showToast('✓ Resultados actualizados');
   }
 
-  // API 1: worldcup26.ir — gratis, sin API key, sin CORS
   try{
-    const res=await fetch('https://worldcup26.ir/get/games');
+    const res=await fetch('https://api.wc2026api.com/matches');
     if(!res.ok) throw new Error('HTTP '+res.status);
     const data=await res.json();
-    const games=Array.isArray(data)?data:(data.games||data.matches||[]);
+    const games=Array.isArray(data)?data:(data.matches||data.data||[]);
     if(!games.length) throw new Error('Sin partidos');
     processMatches(games);
-    return;
-  }catch(err1){
-    console.warn('worldcup26.ir falló:',err1.message);
-  }
-
-  // API 2: football-data.org con key
-  try{
-    const res=await fetch('https://api.football-data.org/v4/competitions/WC/matches',{
-      headers:{'X-Auth-Token':API_KEY}
-    });
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    const data=await res.json();
-    const matches=data.matches||[];
-    if(!matches.length) throw new Error('Sin partidos');
-    processMatches(matches);
-    return;
-  }catch(err2){
-    console.error('Ambas APIs fallaron:',err2.message);
+  }catch(err){
+    console.error('API falló:',err.message);
     setS('warn','Sin conexión · Calendario activo');
     try{const c=localStorage.getItem(CACHE_KEY);if(c)apiScores=JSON.parse(c);}catch(e){}
   }
