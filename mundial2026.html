@@ -487,7 +487,33 @@ const CACHE_KEY='wc2026_scores_v4';
 const CACHE_TS='wc2026_ts_v4';
 const TTL=60*60*1000;
 let apiScores={};
-const NAME_MAP={'Mexico':'México','South Africa':'Sudáfrica','South Korea':'Corea del Sur','Czechia':'Chequia','Canada':'Canadá','Bosnia and Herzegovina':'Bosnia & Herzegovina','United States':'USA','Switzerland':'Suiza','Brazil':'Brasil','Morocco':'Marruecos','Haiti':'Haití','Scotland':'Escocia','Turkey':'Turquía','Germany':'Alemania','Netherlands':'Países Bajos','Japan':'Japón','Sweden':'Suecia','Tunisia':'Túnez',"Côte d'Ivoire":'Costa de Marfil','Spain':'España','Cape Verde':'Cabo Verde','Belgium':'Bélgica','Egypt':'Egipto','New Zealand':'Nueva Zelanda','Saudi Arabia':'Arabia Saudita','France':'Francia','Norway':'Noruega','Iraq':'Irak','Algeria':'Argelia','Jordan':'Jordania','DR Congo':'Congo RD','England':'Inglaterra','Croatia':'Croacia','Ghana':'Ghana','Panama':'Panamá','Uzbekistan':'Uzbekistán'};
+const NAME_MAP={
+  // Full names
+  'Mexico':'México','South Africa':'Sudáfrica','South Korea':'Corea del Sur',
+  'Korea Republic':'Corea del Sur','Czechia':'Chequia','Czech Republic':'Chequia',
+  'Canada':'Canadá','Bosnia and Herzegovina':'Bosnia & Herzegovina',
+  'Bosnia & Herzegovina':'Bosnia & Herzegovina',
+  'United States':'USA','USA':'USA','United States of America':'USA',
+  'Switzerland':'Suiza','Brazil':'Brasil','Morocco':'Marruecos',
+  'Haiti':'Haití','Scotland':'Escocia','Australia':'Australia',
+  'Turkey':'Turquía','Türkiye':'Turquía','Germany':'Alemania',
+  'Netherlands':'Países Bajos','Japan':'Japón','Sweden':'Suecia',
+  'Tunisia':'Túnez',"Côte d'Ivoire":'Costa de Marfil','Ivory Coast':'Costa de Marfil',
+  'Spain':'España','Cape Verde':'Cabo Verde','Belgium':'Bélgica',
+  'Egypt':'Egipto','Iran':'Irán','New Zealand':'Nueva Zelanda',
+  'Saudi Arabia':'Arabia Saudita','Uruguay':'Uruguay',
+  'France':'Francia','Senegal':'Senegal','Norway':'Noruega',
+  'Iraq':'Irak','Argentina':'Argentina','Algeria':'Argelia',
+  'Austria':'Austria','Jordan':'Jordania','Portugal':'Portugal',
+  'DR Congo':'Congo RD','Congo DR':'Congo RD','Democratic Republic of Congo':'Congo RD',
+  'England':'Inglaterra','Croatia':'Croacia','Ghana':'Ghana',
+  'Panama':'Panamá','Uzbekistan':'Uzbekistán','Colombia':'Colombia',
+  'Curaçao':'Curaçao','Curacao':'Curaçao',
+  // Short names the API might return
+  'México':'México','Sudáfrica':'Sudáfrica','Brasil':'Brasil',
+  'Alemania':'Alemania','España':'España','Francia':'Francia',
+  'Japón':'Japón','Países Bajos':'Países Bajos',
+};
 const norm=n=>NAME_MAP[n]||n;
 function makeKey(t1,t2){return`${t1}||${t2}`;}
 function getScore(m){return apiScores[makeKey(m.t1,m.t2)]||null;}
@@ -505,22 +531,50 @@ async function tryFetchAPI(force=false){
   }
   setS('loading','Consultando football-data.org…');
   try{
-    const res=await fetch('https://api.football-data.org/v4/competitions/WC/matches',{headers:{'X-Auth-Token':API_KEY}});
-    if(!res.ok)throw new Error(`HTTP ${res.status}`);
+    const res=await fetch('https://api.football-data.org/v4/competitions/WC/matches',{
+      method:'GET',
+      headers:{
+        'X-Auth-Token':API_KEY,
+        'X-Unfold-Lineups':'false',
+      },
+      mode:'cors',
+    });
+    if(!res.ok){
+      const errText=await res.text().catch(()=>'');
+      throw new Error(`HTTP ${res.status} · ${errText.slice(0,100)}`);
+    }
     const data=await res.json();
+    const matches=data.matches||[];
+    if(!matches.length)throw new Error('Sin partidos en respuesta');
+    // Debug: log first 3 matches to console
+    console.log('API WC matches sample:',matches.slice(0,3).map(m=>({
+      home:m.homeTeam?.name,away:m.awayTeam?.name,
+      status:m.status,score:m.score?.fullTime
+    })));
     apiScores={};
-    (data.matches||[]).forEach(m=>{
-      const t1=norm(m.homeTeam?.name||''),t2=norm(m.awayTeam?.name||'');
-      const g1=m.score?.fullTime?.home,g2=m.score?.fullTime?.away,st=m.status;
-      if(t1&&t2)apiScores[makeKey(t1,t2)]={g1,g2,status:st};
+    matches.forEach(m=>{
+      const t1=norm(m.homeTeam?.shortName||m.homeTeam?.name||'');
+      const t2=norm(m.awayTeam?.shortName||m.awayTeam?.name||'');
+      const t1full=norm(m.homeTeam?.name||'');
+      const t2full=norm(m.awayTeam?.name||'');
+      const g1=m.score?.fullTime?.home??m.score?.halfTime?.home??null;
+      const g2=m.score?.fullTime?.away??m.score?.halfTime?.away??null;
+      const st=m.status;
+      // Store by both short name and full name to maximize matches
+      const score={g1,g2,status:st};
+      if(t1&&t2)apiScores[makeKey(t1,t2)]=score;
+      if(t1full&&t2full&&t1full!==t1)apiScores[makeKey(t1full,t2full)]=score;
     });
     localStorage.setItem(CACHE_KEY,JSON.stringify(apiScores));
     localStorage.setItem(CACHE_TS,Date.now().toString());
-    setS('ok',`Resultados actualizados · ${Object.keys(apiScores).length} partidos`);
+    const finished=matches.filter(m=>m.status==='FINISHED').length;
+    const live=matches.filter(m=>['IN_PLAY','PAUSED','HALFTIME'].includes(m.status)).length;
+    setS('ok',`✓ ${matches.length} partidos · ${finished} jugados${live>0?` · ${live} en vivo`:''}`);
     updateTS(Date.now());
     showToast('✓ Resultados actualizados');
   }catch(err){
-    setS('warn',`API no disponible · Calendario activo`);
+    console.error('API Error:',err);
+    setS('warn',`API: ${err.message.slice(0,60)} · Calendario activo`);
     try{const c=localStorage.getItem(CACHE_KEY);if(c)apiScores=JSON.parse(c);}catch(e){}
   }
   renderAll();renderStandings();updateCountdown();
