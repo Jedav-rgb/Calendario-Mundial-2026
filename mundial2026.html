@@ -526,56 +526,58 @@ async function tryFetchAPI(force=false){
   if(!force){
     const ts=parseInt(localStorage.getItem(CACHE_TS)||'0');
     if(Date.now()-ts<TTL){
-      try{const c=localStorage.getItem(CACHE_KEY);if(c){apiScores=JSON.parse(c);setS('ok','Datos actualizados · football-data.org');updateTS(ts);renderAll();renderStandings();return;}}catch(e){}
+      try{
+        const c=localStorage.getItem(CACHE_KEY);
+        if(c){apiScores=JSON.parse(c);setS('ok','Datos en caché · football-data.org');updateTS(ts);renderAll();renderStandings();return;}
+      }catch(e){}
     }
   }
   setS('loading','Consultando football-data.org…');
-  try{
-    const res=await fetch('https://api.football-data.org/v4/competitions/WC/matches',{
-      method:'GET',
-      headers:{
-        'X-Auth-Token':API_KEY,
-        'X-Unfold-Lineups':'false',
-      },
-      mode:'cors',
-    });
-    if(!res.ok){
-      const errText=await res.text().catch(()=>'');
-      throw new Error(`HTTP ${res.status} · ${errText.slice(0,100)}`);
-    }
-    const data=await res.json();
-    const matches=data.matches||[];
-    if(!matches.length)throw new Error('Sin partidos en respuesta');
-    // Debug: log first 3 matches to console
-    console.log('API WC matches sample:',matches.slice(0,3).map(m=>({
-      home:m.homeTeam?.name,away:m.awayTeam?.name,
-      status:m.status,score:m.score?.fullTime
-    })));
+
+  function processMatches(matches){
     apiScores={};
     matches.forEach(m=>{
-      const t1=norm(m.homeTeam?.shortName||m.homeTeam?.name||'');
-      const t2=norm(m.awayTeam?.shortName||m.awayTeam?.name||'');
-      const t1full=norm(m.homeTeam?.name||'');
-      const t2full=norm(m.awayTeam?.name||'');
-      const g1=m.score?.fullTime?.home??m.score?.halfTime?.home??null;
-      const g2=m.score?.fullTime?.away??m.score?.halfTime?.away??null;
+      const t1=norm(m.homeTeam?.name||'');
+      const t2=norm(m.awayTeam?.name||'');
+      const g1=m.score?.fullTime?.home!=null?m.score.fullTime.home:null;
+      const g2=m.score?.fullTime?.away!=null?m.score.fullTime.away:null;
       const st=m.status;
-      // Store by both short name and full name to maximize matches
-      const score={g1,g2,status:st};
-      if(t1&&t2)apiScores[makeKey(t1,t2)]=score;
-      if(t1full&&t2full&&t1full!==t1)apiScores[makeKey(t1full,t2full)]=score;
+      if(t1&&t2) apiScores[makeKey(t1,t2)]={g1,g2,status:st};
     });
     localStorage.setItem(CACHE_KEY,JSON.stringify(apiScores));
     localStorage.setItem(CACHE_TS,Date.now().toString());
     const finished=matches.filter(m=>m.status==='FINISHED').length;
     const live=matches.filter(m=>['IN_PLAY','PAUSED','HALFTIME'].includes(m.status)).length;
-    setS('ok',`✓ ${matches.length} partidos · ${finished} jugados${live>0?` · ${live} en vivo`:''}`);
+    setS('ok','✓ '+matches.length+' partidos · '+finished+' jugados'+(live>0?' · '+live+' en vivo':''));
     updateTS(Date.now());
     showToast('✓ Resultados actualizados');
+  }
+
+  // Llamada directa — football-data.org soporta CORS con X-Auth-Token
+  try{
+    const res=await fetch('https://api.football-data.org/v4/competitions/WC/matches',{
+      headers:{'X-Auth-Token':API_KEY}
+    });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data=await res.json();
+    if(data.errorCode) throw new Error(data.message||'API error');
+    const matches=data.matches||[];
+    if(!matches.length) throw new Error('Sin partidos');
+    processMatches(matches);
   }catch(err){
-    console.error('API Error:',err);
-    setS('warn',`API: ${err.message.slice(0,60)} · Calendario activo`);
-    try{const c=localStorage.getItem(CACHE_KEY);if(c)apiScores=JSON.parse(c);}catch(e){}
+    console.error('API directa falló:',err.message);
+    // Fallback: intentar con no-cors como último recurso
+    try{
+      const res2=await fetch('https://api.football-data.org/v4/competitions/WC/matches?token='+API_KEY);
+      if(!res2.ok) throw new Error('HTTP '+res2.status);
+      const data2=await res2.json();
+      const matches2=data2.matches||[];
+      if(matches2.length) processMatches(matches2);
+      else throw new Error('Sin partidos');
+    }catch(err2){
+      setS('warn','Sin conexión a API · Calendario activo');
+      try{const c=localStorage.getItem(CACHE_KEY);if(c)apiScores=JSON.parse(c);}catch(e){}
+    }
   }
   renderAll();renderStandings();updateCountdown();
 }
