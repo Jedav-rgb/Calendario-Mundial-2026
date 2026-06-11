@@ -528,56 +528,63 @@ async function tryFetchAPI(force=false){
     if(Date.now()-ts<TTL){
       try{
         const c=localStorage.getItem(CACHE_KEY);
-        if(c){apiScores=JSON.parse(c);setS('ok','Datos en caché · football-data.org');updateTS(ts);renderAll();renderStandings();return;}
+        if(c){apiScores=JSON.parse(c);setS('ok','Datos en caché · worldcup26.ir');updateTS(ts);renderAll();renderStandings();return;}
       }catch(e){}
     }
   }
-  setS('loading','Consultando football-data.org…');
+  setS('loading','Consultando resultados…');
 
-  function processMatches(matches){
+  function processMatches(games){
     apiScores={};
-    matches.forEach(m=>{
-      const t1=norm(m.homeTeam?.name||'');
-      const t2=norm(m.awayTeam?.name||'');
-      const g1=m.score?.fullTime?.home!=null?m.score.fullTime.home:null;
-      const g2=m.score?.fullTime?.away!=null?m.score.fullTime.away:null;
-      const st=m.status;
+    games.forEach(m=>{
+      // worldcup26.ir format: home_team, away_team, home_score, away_score, status
+      const t1=norm(m.home_team||m.homeTeam?.name||'');
+      const t2=norm(m.away_team||m.awayTeam?.name||'');
+      const g1=m.home_score!=null?m.home_score:(m.score?.fullTime?.home??null);
+      const g2=m.away_score!=null?m.away_score:(m.score?.fullTime?.away??null);
+      // Normalize status
+      let st=m.status||'SCHEDULED';
+      if(st==='completed'||st==='finished') st='FINISHED';
+      if(st==='in_progress'||st==='live') st='IN_PLAY';
       if(t1&&t2) apiScores[makeKey(t1,t2)]={g1,g2,status:st};
     });
     localStorage.setItem(CACHE_KEY,JSON.stringify(apiScores));
     localStorage.setItem(CACHE_TS,Date.now().toString());
-    const finished=matches.filter(m=>m.status==='FINISHED').length;
-    const live=matches.filter(m=>['IN_PLAY','PAUSED','HALFTIME'].includes(m.status)).length;
-    setS('ok','✓ '+matches.length+' partidos · '+finished+' jugados'+(live>0?' · '+live+' en vivo':''));
+    const finished=Object.values(apiScores).filter(s=>s.status==='FINISHED').length;
+    const live=Object.values(apiScores).filter(s=>s.status==='IN_PLAY').length;
+    setS('ok','✓ '+games.length+' partidos · '+finished+' jugados'+(live>0?' · '+live+' en vivo':''));
     updateTS(Date.now());
     showToast('✓ Resultados actualizados');
   }
 
-  // Llamada directa — football-data.org soporta CORS con X-Auth-Token
+  // API 1: worldcup26.ir — gratis, sin API key, sin CORS
+  try{
+    const res=await fetch('https://worldcup26.ir/get/games');
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data=await res.json();
+    const games=Array.isArray(data)?data:(data.games||data.matches||[]);
+    if(!games.length) throw new Error('Sin partidos');
+    processMatches(games);
+    return;
+  }catch(err1){
+    console.warn('worldcup26.ir falló:',err1.message);
+  }
+
+  // API 2: football-data.org con key
   try{
     const res=await fetch('https://api.football-data.org/v4/competitions/WC/matches',{
       headers:{'X-Auth-Token':API_KEY}
     });
     if(!res.ok) throw new Error('HTTP '+res.status);
     const data=await res.json();
-    if(data.errorCode) throw new Error(data.message||'API error');
     const matches=data.matches||[];
     if(!matches.length) throw new Error('Sin partidos');
     processMatches(matches);
-  }catch(err){
-    console.error('API directa falló:',err.message);
-    // Fallback: intentar con no-cors como último recurso
-    try{
-      const res2=await fetch('https://api.football-data.org/v4/competitions/WC/matches?token='+API_KEY);
-      if(!res2.ok) throw new Error('HTTP '+res2.status);
-      const data2=await res2.json();
-      const matches2=data2.matches||[];
-      if(matches2.length) processMatches(matches2);
-      else throw new Error('Sin partidos');
-    }catch(err2){
-      setS('warn','Sin conexión a API · Calendario activo');
-      try{const c=localStorage.getItem(CACHE_KEY);if(c)apiScores=JSON.parse(c);}catch(e){}
-    }
+    return;
+  }catch(err2){
+    console.error('Ambas APIs fallaron:',err2.message);
+    setS('warn','Sin conexión · Calendario activo');
+    try{const c=localStorage.getItem(CACHE_KEY);if(c)apiScores=JSON.parse(c);}catch(e){}
   }
   renderAll();renderStandings();updateCountdown();
 }
